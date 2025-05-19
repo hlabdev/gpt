@@ -8,8 +8,16 @@ import threading
 import time
 import tkinter as tk
 from tkinter import ttk
+import logging
+
+logging.basicConfig(
+    filename="controller.log",
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 
 class CSPAxis:
+    """Represents a single axis and provides motion-control helpers."""
     def __init__(self, slave):
         self.slave = slave
         self.target_position = 0
@@ -278,6 +286,7 @@ class CSPAxis:
         return int(encoder_counts)  # ส่งค่ากลับเป็นจำนวนเต็ม
 
 class CSPController:
+    """Manages EtherCAT communication and the Tkinter GUI interface."""
     def __init__(self):
         self.master = pysoem.Master()
         self.axes = []
@@ -521,7 +530,8 @@ class CSPController:
         speed_frame = ttk.Frame(footer_frame, style="StatusBar.TFrame")
         speed_frame.pack(side=tk.LEFT, padx=5, pady=2)
         ttk.Label(speed_frame, text="Speed:", style="StatusItem.TLabel").pack(side=tk.LEFT)
-        self.footer_speed_label = ttk.Label(speed_frame, text="0 (0.0 RPM)", style="StatusValue.TLabel", width=15)
+        # Increase width so both set and actual speed values remain visible
+        self.footer_speed_label = ttk.Label(speed_frame, text="0 (0.0 RPM)", style="StatusValue.TLabel", width=30)
         self.footer_speed_label.pack(side=tk.LEFT, padx=2)
         
         # Separator
@@ -1630,6 +1640,7 @@ class CSPController:
         try:
             timestamp = time.strftime("[%H:%M:%S]", time.localtime())
             log_message = f"{timestamp} {message}"
+            logging.info(message)
             
             # เก็บข้อความไว้ในรายการ log
             self.log_messages.append(log_message)
