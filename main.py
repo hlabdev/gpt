@@ -28,8 +28,6 @@ class CSPAxis:
         self.control_word = 0x0006  # Initial state: Ready to switch on
         # Add profile parameters for motion control
         self.profile_velocity = 1000     # Default velocity (encoder counts/sec)
-        # Base velocity keeps the last commanded velocity before override
-        self.base_profile_velocity = self.profile_velocity
         self.profile_acceleration = 1000  # Default acceleration (encoder counts/sec^2)
         self.profile_deceleration = 1000  # Default deceleration (encoder counts/sec^2)
         # เพิ่มค่า encoder resolution สำหรับแปลงเป็น RPM
@@ -150,7 +148,7 @@ class CSPAxis:
         except Exception as e:
             print(f"Error setting motion parameters: {e}")
             
-    def set_profile_velocity(self, velocity, update_base=True):
+    def set_profile_velocity(self, velocity):
         """Set profile velocity (speed) parameter"""
         try:
             self.profile_velocity = velocity
@@ -180,30 +178,6 @@ class CSPAxis:
             return True
         except Exception as e:
             print(f"Error setting profile deceleration: {e}")
-            return False
-
-    def override_velocity(self, percentage):
-        """Apply a real-time velocity override.
-
-        Parameters
-        ----------
-        percentage : float
-            Scaling factor in percent. ``100`` keeps the original velocity.
-        """
-        try:
-            if percentage <= 0:
-                raise ValueError("percentage must be greater than 0")
-
-            new_velocity = int(self.base_profile_velocity * (percentage / 100.0))
-            # Apply new velocity without altering the base value
-            self.set_profile_velocity(new_velocity, update_base=False)
-
-            # Update immediately if servo is enabled
-            if self.servo_enabled:
-                self.send_pdo()
-            return True
-        except Exception as e:
-            print(f"Error overriding velocity: {e}")
             return False
 
     def emergency_stop(self):
@@ -832,9 +806,9 @@ class CSPController:
                 speed_control_box = ttk.LabelFrame(left_column, text="Speed Control")
                 speed_control_box.grid(row=1, column=0, padx=10, pady=10, sticky="ew")
                 
-                # สร้างตัวเลือกความเร็ว JOG สำหรับใช้ร่วมกัน
-                speed_selector, current_speed_label = self.create_jog_speed_selector(speed_control_box, axis)
-                speed_selector.pack(fill="x", padx=10, pady=5)
+                # ใช้ speed control panel ใหม่ที่รองรับ override แบบ realtime
+                speed_panel = self.create_speed_control_panel(speed_control_box, axis)
+                speed_panel.pack(fill="x", padx=10, pady=5)
                 
                 # เพิ่มคำอธิบายว่า Speed Control นี้ใช้ได้กับทุกการเคลื่อนที่
                 ttk.Label(speed_control_box, 
@@ -1053,7 +1027,6 @@ class CSPController:
                     'servo_button': servo_on_btn,
                     'jog_pos_btn': jog_pos_btn,
                     'jog_neg_btn': jog_neg_btn,
-                    'current_jog_speed': current_speed_label
                 }
                 
                 # ลบ right_column เพราะย้ายทุกอย่างไปอยู่ในแท็บแล้ว
@@ -1157,21 +1130,16 @@ class CSPController:
                                 if hasattr(self, 'footer_mode_label'):
                                     self.footer_mode_label.config(text="CSP (8)")
                                     
-                            # อัพเดทสถานะ JOG ปัจจุบัน
-                            if 'current_jog_speed' in axis.gui_refs:
-                                jog_rpm = axis.counts_to_rpm(axis.profile_velocity)
-                                axis.gui_refs['current_jog_speed'].config(text=f"{axis.profile_velocity} counts/sec ({jog_rpm:.1f} RPM)")
-                                
-                                # แสดงสถานะการ JOG ด้วยการไฮไลต์ปุ่ม
-                                if axis.jog_direction > 0 and 'jog_pos_btn' in axis.gui_refs:
-                                    axis.gui_refs['jog_pos_btn'].config(relief=tk.SUNKEN, bg="#3a6ab2")
-                                elif axis.jog_direction < 0 and 'jog_neg_btn' in axis.gui_refs:
-                                    axis.gui_refs['jog_neg_btn'].config(relief=tk.SUNKEN, bg="#3a6ab2")
-                                elif axis.jog_direction == 0:
-                                    if 'jog_pos_btn' in axis.gui_refs:
-                                        axis.gui_refs['jog_pos_btn'].config(relief=tk.RAISED, bg="#4b89dc")
-                                    if 'jog_neg_btn' in axis.gui_refs:
-                                        axis.gui_refs['jog_neg_btn'].config(relief=tk.RAISED, bg="#4b89dc")
+                            # Highlight buttons while jogging
+                            if axis.jog_direction > 0 and 'jog_pos_btn' in axis.gui_refs:
+                                axis.gui_refs['jog_pos_btn'].config(relief=tk.SUNKEN, bg="#3a6ab2")
+                            elif axis.jog_direction < 0 and 'jog_neg_btn' in axis.gui_refs:
+                                axis.gui_refs['jog_neg_btn'].config(relief=tk.SUNKEN, bg="#3a6ab2")
+                            elif axis.jog_direction == 0:
+                                if 'jog_pos_btn' in axis.gui_refs:
+                                    axis.gui_refs['jog_pos_btn'].config(relief=tk.RAISED, bg="#4b89dc")
+                                if 'jog_neg_btn' in axis.gui_refs:
+                                    axis.gui_refs['jog_neg_btn'].config(relief=tk.RAISED, bg="#4b89dc")
                             
                             # อ่านและแสดงรหัสข้อผิดพลาด
                             try:
@@ -1428,6 +1396,19 @@ class CSPController:
             return False
         except Exception as e:
             error_msg = f"Error setting velocity: {e}"
+            print(error_msg)
+            self.add_to_log(error_msg)
+            return False
+
+    def set_velocity_override(self, axis, percentage):
+        """Apply a velocity override as a percentage of the base speed."""
+        try:
+            if axis.override_velocity(percentage):
+                self.add_to_log(f"Velocity override: {percentage:.0f}% -> {axis.profile_velocity} counts/sec")
+                return True
+            return False
+        except Exception as e:
+            error_msg = f"Error applying velocity override: {e}"
             print(error_msg)
             self.add_to_log(error_msg)
             return False
@@ -1743,13 +1724,8 @@ class CSPController:
         """ตั้งค่าความเร็ว JOG สำหรับแกน"""
         try:
             # ตั้งค่าความเร็วสำหรับ JOG
-            axis.profile_velocity = speed_value
+            axis.set_profile_velocity(speed_value)
             
-            # อัพเดท label แสดงความเร็ว JOG
-            if hasattr(axis, 'gui_refs') and 'current_jog_speed' in axis.gui_refs:
-                rpm = axis.counts_to_rpm(speed_value)
-                axis.gui_refs['current_jog_speed'].config(text=f"{speed_value} counts/sec ({rpm:.1f} RPM)")
-                
             self.add_to_log(f"JOG speed set to {speed_value} counts/sec ({axis.counts_to_rpm(speed_value):.1f} RPM)")
             return True
             
@@ -1900,6 +1876,67 @@ class CSPController:
                 pass
                 
             return False
+
+    def create_speed_control_panel(self, parent_frame, axis):
+        """Create a new speed control panel with presets and real-time override."""
+        try:
+            panel = ttk.Frame(parent_frame)
+
+            # Preset speed buttons
+            presets = [500, 1000, 5000, 10000]
+            preset_frame = ttk.Frame(panel)
+            preset_frame.pack(fill="x", padx=5, pady=5)
+            ttk.Label(preset_frame, text="Presets:").pack(side=tk.LEFT, padx=5)
+            for spd in presets:
+                ttk.Button(
+                    preset_frame,
+                    text=str(spd),
+                    command=lambda v=spd: self.set_velocity(axis, v),
+                    width=6,
+                ).pack(side=tk.LEFT, padx=2)
+
+            # Custom speed entry
+            custom_frame = ttk.Frame(panel)
+            custom_frame.pack(fill="x", padx=5, pady=5)
+            ttk.Label(custom_frame, text="Custom speed:").pack(side=tk.LEFT, padx=5)
+            custom_var = tk.StringVar()
+            ttk.Entry(custom_frame, textvariable=custom_var, width=8).pack(side=tk.LEFT)
+            ttk.Button(
+                custom_frame,
+                text="Set",
+                command=lambda: self.set_velocity(axis, int(custom_var.get() or 0)),
+            ).pack(side=tk.LEFT, padx=2)
+
+            # Override slider
+            override_frame = ttk.Frame(panel)
+            override_frame.pack(fill="x", padx=5, pady=5)
+            ttk.Label(override_frame, text="Override %:").pack(side=tk.LEFT, padx=5)
+            ov_var = tk.DoubleVar(value=100)
+
+            def on_override(val):
+                try:
+                    percent = float(val)
+                    self.set_velocity_override(axis, percent)
+                except ValueError:
+                    pass
+
+            ttk.Scale(
+                override_frame,
+                from_=10,
+                to=200,
+                orient=tk.HORIZONTAL,
+                variable=ov_var,
+                command=on_override,
+                length=200,
+            ).pack(side=tk.LEFT, padx=5)
+            ttk.Label(override_frame, textvariable=ov_var).pack(side=tk.LEFT)
+
+            return panel
+        except Exception as e:
+            self.add_to_log(f"Error creating speed control: {e}")
+            empty = ttk.Frame(parent_frame)
+            ttk.Label(empty, text="Speed control error").pack()
+            return empty
 
     def create_jog_speed_selector(self, parent_frame, axis):
         """สร้าง UI สำหรับเลือกความเร็ว JOG ที่สามารถนำไปใช้ซ้ำได้
