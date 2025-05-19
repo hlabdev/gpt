@@ -8,8 +8,16 @@ import threading
 import time
 import tkinter as tk
 from tkinter import ttk
+import logging
+
+logging.basicConfig(
+    filename="controller.log",
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 
 class CSPAxis:
+    """Represents a single axis and provides motion-control helpers."""
     def __init__(self, slave):
         self.slave = slave
         self.target_position = 0
@@ -278,6 +286,7 @@ class CSPAxis:
         return int(encoder_counts)  # ส่งค่ากลับเป็นจำนวนเต็ม
 
 class CSPController:
+    """Manages EtherCAT communication and the Tkinter GUI interface."""
     def __init__(self):
         self.master = pysoem.Master()
         self.axes = []
@@ -1070,16 +1079,15 @@ class CSPController:
                             
                             # แสดงความเร็วที่ตั้งค่าไว้
                             rpm = axis.counts_to_rpm(axis.profile_velocity)
-                            
+
                             # แสดงความเร็วจริงที่อ่านได้จากมอเตอร์
                             actual_rpm = axis.get_actual_velocity_rpm()
-                            
+
                             # แสดงทั้งความเร็วที่ตั้งค่าและความเร็วจริง
-                            velocity_text = f"{axis.profile_velocity} ({rpm:.1f} RPM)"
-                            
-                            # ถ้ามอเตอร์กำลังเคลื่อนที่ ให้แสดงความเร็วจริงด้วย
-                            if axis.servo_enabled and (abs(axis.actual_velocity) > 0 or axis.jog_direction != 0):
-                                velocity_text = f"Set: {axis.profile_velocity} | Actual: {axis.actual_velocity} ({actual_rpm:.1f} RPM)"
+                            velocity_text = (
+                                f"Set: {axis.profile_velocity} | "
+                                f"Actual: {axis.actual_velocity} ({actual_rpm:.1f} RPM)"
+                            )
                             
                             # อัพเดท footer speed
                             if hasattr(self, 'footer_speed_label'):
@@ -1630,6 +1638,7 @@ class CSPController:
         try:
             timestamp = time.strftime("[%H:%M:%S]", time.localtime())
             log_message = f"{timestamp} {message}"
+            logging.info(message)
             
             # เก็บข้อความไว้ในรายการ log
             self.log_messages.append(log_message)
