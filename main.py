@@ -8,8 +8,16 @@ import threading
 import time
 import tkinter as tk
 from tkinter import ttk
+import logging
+
+logging.basicConfig(
+    filename="controller.log",
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(message)s",
+)
 
 class CSPAxis:
+    """Represents a single axis and provides motion-control helpers."""
     def __init__(self, slave):
         self.slave = slave
         self.target_position = 0
@@ -20,6 +28,8 @@ class CSPAxis:
         self.control_word = 0x0006  # Initial state: Ready to switch on
         # Add profile parameters for motion control
         self.profile_velocity = 1000     # Default velocity (encoder counts/sec)
+        # Base velocity keeps the last commanded velocity before override
+        self.base_profile_velocity = self.profile_velocity
         self.profile_acceleration = 1000  # Default acceleration (encoder counts/sec^2)
         self.profile_deceleration = 1000  # Default deceleration (encoder counts/sec^2)
         # เพิ่มค่า encoder resolution สำหรับแปลงเป็น RPM
@@ -140,10 +150,12 @@ class CSPAxis:
         except Exception as e:
             print(f"Error setting motion parameters: {e}")
             
-    def set_profile_velocity(self, velocity):
+    def set_profile_velocity(self, velocity, update_base=True):
         """Set profile velocity (speed) parameter"""
         try:
             self.profile_velocity = velocity
+            if update_base:
+                self.base_profile_velocity = velocity
             self.slave.sdo_write(0x6081, 0, struct.pack("<i", velocity))
             return True
         except Exception as e:
@@ -168,6 +180,30 @@ class CSPAxis:
             return True
         except Exception as e:
             print(f"Error setting profile deceleration: {e}")
+            return False
+
+    def override_velocity(self, percentage):
+        """Apply a real-time velocity override.
+
+        Parameters
+        ----------
+        percentage : float
+            Scaling factor in percent. ``100`` keeps the original velocity.
+        """
+        try:
+            if percentage <= 0:
+                raise ValueError("percentage must be greater than 0")
+
+            new_velocity = int(self.base_profile_velocity * (percentage / 100.0))
+            # Apply new velocity without altering the base value
+            self.set_profile_velocity(new_velocity, update_base=False)
+
+            # Update immediately if servo is enabled
+            if self.servo_enabled:
+                self.send_pdo()
+            return True
+        except Exception as e:
+            print(f"Error overriding velocity: {e}")
             return False
 
     def emergency_stop(self):
@@ -278,6 +314,7 @@ class CSPAxis:
         return int(encoder_counts)  # ส่งค่ากลับเป็นจำนวนเต็ม
 
 class CSPController:
+    """Manages EtherCAT communication and the Tkinter GUI interface."""
     def __init__(self):
         self.master = pysoem.Master()
         self.axes = []
@@ -1420,6 +1457,19 @@ class CSPController:
             print(error_msg)
             self.add_to_log(error_msg)
             return False
+
+    def set_velocity_override(self, axis, percentage):
+        """Change the axis speed by applying a percentage override."""
+        try:
+            if axis.override_velocity(percentage):
+                self.add_to_log(f"Velocity override set to {percentage}%")
+                return True
+            return False
+        except Exception as e:
+            error_msg = f"Error setting velocity override: {e}"
+            print(error_msg)
+            self.add_to_log(error_msg)
+            return False
             
     def set_all_motion_parameters(self, velocity, acceleration, deceleration):
         """Set motion parameters for all axes"""
@@ -1630,6 +1680,7 @@ class CSPController:
         try:
             timestamp = time.strftime("[%H:%M:%S]", time.localtime())
             log_message = f"{timestamp} {message}"
+            logging.info(message)
             
             # เก็บข้อความไว้ในรายการ log
             self.log_messages.append(log_message)
