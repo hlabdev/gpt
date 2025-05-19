@@ -28,7 +28,6 @@ class CSPAxis:
         self.control_word = 0x0006  # Initial state: Ready to switch on
         # Add profile parameters for motion control
         self.profile_velocity = 1000     # Default velocity (encoder counts/sec)
-        self.base_profile_velocity = self.profile_velocity  # keep original value for override logic
         self.profile_acceleration = 1000  # Default acceleration (encoder counts/sec^2)
         self.profile_deceleration = 1000  # Default deceleration (encoder counts/sec^2)
         # เพิ่มค่า encoder resolution สำหรับแปลงเป็น RPM
@@ -149,16 +148,8 @@ class CSPAxis:
         except Exception as e:
             print(f"Error setting motion parameters: {e}")
             
-    def set_profile_velocity(self, velocity, update_base=True):
-        """Set profile velocity (speed) parameter
-
-        Parameters
-        ----------
-        velocity : int
-            New velocity in counts per second.
-        update_base : bool
-            If True, update the stored base velocity used for overrides.
-        """
+    def set_profile_velocity(self, velocity):
+        """Set profile velocity (speed) parameter"""
         try:
             self.profile_velocity = velocity
             if update_base:
@@ -188,21 +179,6 @@ class CSPAxis:
         except Exception as e:
             print(f"Error setting profile deceleration: {e}")
             return False
-
-    def override_velocity(self, percentage):
-        """Temporarily override velocity by a percentage of the base value."""
-        try:
-            new_velocity = int(self.base_profile_velocity * (percentage / 100.0))
-            # Do not update base when overriding
-            self.set_profile_velocity(new_velocity, update_base=False)
-            return True
-        except Exception as e:
-            print(f"Error overriding velocity: {e}")
-            return False
-
-    def reset_velocity_override(self):
-        """Restore the velocity to the last base value."""
-        return self.set_profile_velocity(self.base_profile_velocity, update_base=False)
 
     def emergency_stop(self):
         """หยุดฉุกเฉินทันที - ล็อกเพลา (Zero-Speed Stop)"""
@@ -1459,6 +1435,19 @@ class CSPController:
             return False
         except Exception as e:
             error_msg = f"Error setting deceleration: {e}"
+            print(error_msg)
+            self.add_to_log(error_msg)
+            return False
+
+    def set_velocity_override(self, axis, percentage):
+        """Change the axis speed by applying a percentage override."""
+        try:
+            if axis.override_velocity(percentage):
+                self.add_to_log(f"Velocity override set to {percentage}%")
+                return True
+            return False
+        except Exception as e:
+            error_msg = f"Error setting velocity override: {e}"
             print(error_msg)
             self.add_to_log(error_msg)
             return False
